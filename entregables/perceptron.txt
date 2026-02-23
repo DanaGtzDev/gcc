@@ -1,0 +1,44 @@
+import random
+
+x = [(0,0),(0,1),(1,0),(1,1)]
+y = [1,1,1,0]
+
+w1 = random.random()
+w2 = random.random()
+b = 0
+learning_rate = 0.5
+
+epochs = 100
+
+for j in range(0, epochs - 1):
+    for i in range(0,len(x)):
+        z = (w1*x[i][0]) + (w2*x[i][1]) + b
+        step_result = 0
+
+        #Step function
+        if(z < 0):
+            step_result = 0
+        else:
+            step_result = 1
+
+        loss = step_result - y[i]
+        
+        w1 = w1 - learning_rate*loss*x[i][0]
+        w2 = w2 - learning_rate*loss*x[i][1]
+        b = b - learning_rate*loss
+
+        print(f"Log: w1: {w1}, w2: {w2}, b: {b}, loss:{loss}, predicted: {step_result}, real: {y[i]} ")
+
+for i in range(0,len(x)):
+    z = (w1*x[i][0]) + (w2*x[i][1]) + b
+    step_result = 0
+
+    #Step function
+    if(z < 0):
+        step_result = 0
+    else:
+        step_result = 1
+
+    print(f"Prediction: {step_result}, Real: {y[i]}")
+
+print(f"{w1} x1 + {w2} x2 + {b}")
