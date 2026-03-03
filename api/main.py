@@ -6,8 +6,17 @@ import joblib
 from pydantic import BaseModel
 from typing import List
 import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Equipment Order Predictor")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],           # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],           # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],           # Allows all headers
+)
 
 ordenes = pd.read_csv("consolidated_ordenes.csv")
 
@@ -86,7 +95,7 @@ async def predict(unit_id: int):
     dummy[0, 0] = val_scaled
     prediction_final = scaler.inverse_transform(dummy)[0, 0]
 
-    return {"predicted_days_to_next_order": float(max(0, prediction_final))}
+    return {"predicted_days_to_next_order": float(max(0, prediction_final) + 2.5)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
