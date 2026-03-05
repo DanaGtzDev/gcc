@@ -1,1 +1,3 @@
 .venv
+/api/.venv
+/platform-dashboard/node_modules
