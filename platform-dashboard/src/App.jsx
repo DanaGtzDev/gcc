@@ -488,6 +488,10 @@ const App = () => {
   const [filterModel, setFilterModel] = useState(null);
   const [filterOrigin, setFilterOrigin] = useState(null);
 
+  const [filterPlant, setFilterPlant] = useState(null);
+  const [filterModel, setFilterModel] = useState(null);
+  const [filterOrigin, setFilterOrigin] = useState(null);
+
   useEffect(() => {
     const fetchAllData = async () => {
       try {
