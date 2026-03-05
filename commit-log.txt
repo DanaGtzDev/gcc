@@ -1,0 +1,59 @@
+commit e446f0801a925a2a2e677cfbd4a8b09eaa1e56e6
+Author: DanaGtzDev <danagtzdev@gmail>
+Commit: DanaGtzDev <danagtzdev@gmail>
+
+    Dispay timeline
+
+commit 33c93eb005c1821922a671882a28824fe7dff168
+Author: DanaGtzDev <danagtzdev@gmail>
+Commit: DanaGtzDev <danagtzdev@gmail>
+
+    surprisingly this vibecoded shit worked
+
+commit 2045dd1b4be3725ff108a9f25db4502e785d43c5
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    In theory everything is commited
+
+commit 9845b3f462de1f17138314e5139cb61290c9fe95
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    Hello
+
+commit 2b1a5160a1bd2387ecbc87d4bbd516bb04923618
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    basic api done
+
+commit 1c6e240e79b500dd19ed2b80d10e0d7485cfd213
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    Model with accuracy of plus minus 2.57 days
+
+commit 198d91529825ee764b2228d123e8cf5ab5072131
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    SAMSARA data
+
+commit 42f7e76dbb759834a75d6b4cd2a4e166f92ae4dd
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    New folder entregables
+
+commit 49932cbc8ab2648fc98e8cfc4e78c62847d28e79
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    backpropagation from scratch
+
+commit 690815ac47f495ae80650a0529ad904aeabc3a9e
+Author: DanaGtzDev <danagtzdev@gmail.com>
+Commit: DanaGtzDev <danagtzdev@gmail.com>
+
+    first commit
