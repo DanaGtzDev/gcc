@@ -28,7 +28,6 @@ le_plant  = joblib.load("scaler_encoder/le_plant.pkl")
 model_df_stats = joblib.load("scaler_encoder/model_df_stats.pkl")  # dict of {col: (min, range)}
 
 CONT_COLS = [
-    'cum_days',
     'rolling_mean_5',  'rolling_std_5',
     'rolling_mean_10', 'rolling_std_10',
     'rolling_mean_20', 'rolling_std_20',
@@ -37,7 +36,7 @@ CONT_COLS = [
 
 FEATURE_COLS = [
     'modelo', 'marca_enc', 'plant_enc',
-    'month_sin', 'month_cos', 'cum_days',
+    'month_sin', 'month_cos',
     'rolling_mean_5',  'rolling_std_5',
     'rolling_mean_10', 'rolling_std_10',
     'rolling_mean_20', 'rolling_std_20',
@@ -79,7 +78,6 @@ def preprocess_for_aft(orders_list):
     df['month']     = df['created_on'].dt.month
     df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
     df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
-    df['cum_days']  = (df['created_on'] - df['created_on'].iloc[0]).dt.days
 
     df['marca_enc'] = le_marca.transform(df['marca'].astype(str))
     df['plant_enc'] = le_plant.transform(df['plant'].astype(str))
@@ -105,9 +103,17 @@ async def get_all_units():
 @app.get("/units/{unit_id}")
 async def get_unit(unit_id: int):
     filtered = ordenes.loc[ordenes["equipment"] == unit_id]
-    if len(filtered) == 0:
-        raise HTTPException(status_code=404, detail=f"Equipment with id {unit_id} not found")
-    return filtered.to_dict(orient='records')
+
+    if filtered.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Equipment with id {unit_id} not found"
+        )
+
+    row = filtered.iloc[0][["equipment","main_plant","plant","marca","modelo","origen"]]
+
+    # Convert entire row safely to Python-native types
+    return row.to_dict()
 
 @app.get("/predict/{unit_id}")
 async def predict(unit_id: int):
