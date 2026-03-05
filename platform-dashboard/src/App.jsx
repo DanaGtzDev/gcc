@@ -123,6 +123,7 @@ const FilterDropdown = ({ label, icon: Icon, options, value, onChange }) => { //
 const UnitDetailView = ({ unitId, onBack }) => {
   const [history, setHistory] = useState([]);
   const [prediction, setPrediction] = useState(null);
+  const [mtbfData, setMtbfData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -142,8 +143,20 @@ const UnitDetailView = ({ unitId, onBack }) => {
         if (!predRes.ok) throw new Error(`Prediction failed: ${predRes.status}`);
         const predData = await predRes.json();
         
+        // Fetch MTBF data (optional, don't fail if endpoint not available)
+        let mtbfData = null;
+        try {
+          const mtbfRes = await fetch(`http://localhost:8000/mtbf/${unitId}`);
+          if (mtbfRes.ok) {
+            mtbfData = await mtbfRes.json();
+          }
+        } catch (mtbfErr) {
+          console.warn('MTBF endpoint not available:', mtbfErr);
+        }
+        
         setHistory(historyData);
         setPrediction(predData);
+        setMtbfData(mtbfData);
       } catch (err) {
         setError(err.message);
       } finally {
@@ -437,7 +450,7 @@ const UnitDetailView = ({ unitId, onBack }) => {
                   {lastOrder.date.toLocaleDateString()}
                 </span>
               </div>
-              <div className="flex justify-between items-center">
+               <div className="flex justify-between items-center">
                 <span className="text-slate-600">Days since last order:</span>
                 <span className="text-sm font-semibold text-slate-700">
                   {Math.floor((new Date() - lastOrder.date) / (1000 * 60 * 60 * 24))} days
@@ -446,6 +459,204 @@ const UnitDetailView = ({ unitId, onBack }) => {
             </div>
           </div>
         </div>
+        
+        {/* MTBF Chart */}
+        {mtbfData && mtbfData.time_series && mtbfData.time_series.length > 0 && (
+          <div className="mt-6 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 className="text-lg font-bold text-slate-800 mb-4">MTBF (Mean Time Between Failure) Trend</h2>
+            <p className="text-sm text-slate-600 mb-6">
+              Rolling MTBF (last 10 intervals) shows how the average time between orders changes over time.
+              Overall MTBF: <span className="font-bold text-slate-800">{mtbfData.overall_mtbf.toFixed(1)} days</span>
+            </p>
+            
+            <div className="overflow-x-auto">
+              {(() => {
+                const ts = mtbfData.time_series;
+                if (ts.length === 0) return <div className="text-center py-8 text-slate-500">No MTBF data available</div>;
+                
+                // Parse dates and get mtbf values
+                const points = ts.map(p => ({
+                  date: new Date(p.order_date),
+                  mtbf: p.rolling_mtbf_10,
+                  daysSincePrevious: p.days_since_previous,
+                  cumulativeMtbf: p.cumulative_mtbf
+                }));
+                
+                const minDate = new Date(Math.min(...points.map(p => p.date.getTime())));
+                const maxDate = new Date(Math.max(...points.map(p => p.date.getTime())));
+                const minMtbf = Math.min(...points.map(p => p.mtbf));
+                const maxMtbf = Math.max(...points.map(p => p.mtbf));
+                
+                // Add some padding to Y axis
+                const yPadding = (maxMtbf - minMtbf) * 0.1;
+                const yMin = Math.max(0, minMtbf - yPadding);
+                const yMax = maxMtbf + yPadding;
+                
+                const dateRange = Math.max(1, maxDate.getTime() - minDate.getTime());
+                const mtbfRange = Math.max(1, yMax - yMin);
+                
+                // Chart dimensions
+                const chartWidth = Math.max(800, ts.length * 40);
+                const chartHeight = 400;
+                const padding = { top: 40, right: 40, bottom: 60, left: 80 };
+                
+                const xScale = (date) => padding.left + ((date.getTime() - minDate.getTime()) / dateRange) * (chartWidth - padding.left - padding.right);
+                const yScale = (mtbf) => chartHeight - padding.bottom - ((mtbf - yMin) / mtbfRange) * (chartHeight - padding.top - padding.bottom);
+                
+                // Generate line path
+                let linePath = '';
+                points.forEach((p, i) => {
+                  const x = xScale(p.date);
+                  const y = yScale(p.mtbf);
+                  if (i === 0) {
+                    linePath += `M ${x} ${y} `;
+                  } else {
+                    linePath += `L ${x} ${y} `;
+                  }
+                });
+                
+                return (
+                  <svg 
+                    width={chartWidth}
+                    height={chartHeight}
+                    className="min-w-full"
+                  >
+                    {/* Grid lines */}
+                    {[0, 0.25, 0.5, 0.75, 1].map(t => {
+                      const y = yScale(yMin + t * mtbfRange);
+                      return (
+                        <g key={t}>
+                          <line
+                            x1={padding.left}
+                            y1={y}
+                            x2={chartWidth - padding.right}
+                            y2={y}
+                            stroke="#e2e8f0"
+                            strokeWidth="1"
+                          />
+                          <text
+                            x={padding.left - 10}
+                            y={y}
+                            textAnchor="end"
+                            dominantBaseline="middle"
+                            className="text-xs fill-slate-500"
+                          >
+                            {(yMin + t * mtbfRange).toFixed(0)}
+                          </text>
+                        </g>
+                      );
+                    })}
+                    
+                    {/* X axis grid lines (dates) */}
+                    {[...Array(6)].map((_, i) => {
+                      const date = new Date(minDate.getTime() + (dateRange * i) / 5);
+                      const x = xScale(date);
+                      return (
+                        <g key={i}>
+                          <line
+                            x1={x}
+                            y1={chartHeight - padding.bottom}
+                            x2={x}
+                            y2={padding.top}
+                            stroke="#e2e8f0"
+                            strokeWidth="1"
+                            strokeDasharray="4,4"
+                          />
+                          <text
+                            x={x}
+                            y={chartHeight - padding.bottom + 20}
+                            textAnchor="middle"
+                            className="text-xs fill-slate-500"
+                          >
+                            {date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+                          </text>
+                        </g>
+                      );
+                    })}
+                    
+                    {/* MTBF line */}
+                    <path
+                      d={linePath}
+                      fill="none"
+                      stroke="#3b82f6"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    
+                    {/* Data points */}
+                    {points.map((p, i) => (
+                      <g key={i}>
+                        <circle
+                          cx={xScale(p.date)}
+                          cy={yScale(p.mtbf)}
+                          r="4"
+                          fill="#3b82f6"
+                          stroke="white"
+                          strokeWidth="2"
+                        />
+                        <title>
+                          Date: {p.date.toLocaleDateString()}
+                          {'\n'}Rolling MTBF: {p.mtbf.toFixed(1)} days
+                          {'\n'}Interval: {p.daysSincePrevious.toFixed(1)} days
+                          {'\n'}Cumulative MTBF: {p.cumulativeMtbf.toFixed(1)} days
+                        </title>
+                      </g>
+                    ))}
+                    
+                    {/* Axis labels */}
+                    <text
+                      x={chartWidth / 2}
+                      y={chartHeight - 10}
+                      textAnchor="middle"
+                      className="text-sm font-semibold fill-slate-700"
+                    >
+                      Timeline
+                    </text>
+                    <text
+                      x={padding.left - 50}
+                      y={chartHeight / 2}
+                      textAnchor="middle"
+                      className="text-sm font-semibold fill-slate-700"
+                      transform={`rotate(-90, ${padding.left - 50}, ${chartHeight / 2})`}
+                    >
+                      MTBF (days)
+                    </text>
+                    
+                    {/* Legend */}
+                    <g transform={`translate(${chartWidth - padding.right - 150}, ${padding.top})`}>
+                      <rect width="150" height="60" fill="white" stroke="#e2e8f0" strokeWidth="1" rx="4" />
+                      <text x="10" y="20" className="text-xs font-bold fill-slate-700">Rolling MTBF (10 intervals)</text>
+                      <line x1="10" y1="30" x2="30" y2="30" stroke="#3b82f6" strokeWidth="3" />
+                      <text x="40" y="35" className="text-xs fill-slate-600">MTBF trend</text>
+                      <circle cx="20" cy="50" r="4" fill="#3b82f6" stroke="white" strokeWidth="2" />
+                      <text x="40" y="55" className="text-xs fill-slate-600">Data points</text>
+                    </g>
+                  </svg>
+                );
+              })()}
+            </div>
+            
+            <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+              <div className="bg-slate-50 p-3 rounded-lg">
+                <div className="text-slate-500">Overall MTBF</div>
+                <div className="text-xl font-bold text-slate-800">{mtbfData.overall_mtbf.toFixed(1)} days</div>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-lg">
+                <div className="text-slate-500">Interval Count</div>
+                <div className="text-xl font-bold text-slate-800">{mtbfData.interval_count}</div>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-lg">
+                <div className="text-slate-500">Min Interval</div>
+                <div className="text-xl font-bold text-slate-800">{mtbfData.min_interval.toFixed(1)} days</div>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-lg">
+                <div className="text-slate-500">Max Interval</div>
+                <div className="text-xl font-bold text-slate-800">{mtbfData.max_interval.toFixed(1)} days</div>
+              </div>
+            </div>
+          </div>
+        )}
         
         <div className="mt-6 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
           <h2 className="text-lg font-bold text-slate-800 mb-4">Recent Orders</h2>
@@ -483,10 +694,8 @@ const App = () => {
   const [units, setUnits] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedUnitId, setSelectedUnitId] = useState(null);
-
-  const [filterPlant, setFilterPlant] = useState(null);
-  const [filterModel, setFilterModel] = useState(null);
-  const [filterOrigin, setFilterOrigin] = useState(null);
+  const [fleetMtbf, setFleetMtbf] = useState(null);
+  const [loadingFleetMtbf, setLoadingFleetMtbf] = useState(false);
 
   const [filterPlant, setFilterPlant] = useState(null);
   const [filterModel, setFilterModel] = useState(null);
@@ -526,6 +735,39 @@ const App = () => {
 
     fetchAllData();
   }, []);
+
+  // Fetch fleet MTBF when filters change
+  useEffect(() => {
+    const fetchFleetMtbf = async () => {
+      try {
+        setLoadingFleetMtbf(true);
+        
+        // Build query parameters
+        const params = new URLSearchParams();
+        if (filterPlant) params.append('plant', filterPlant);
+        if (filterModel) params.append('model', filterModel);
+        if (filterOrigin) params.append('origin', filterOrigin);
+        
+        const queryString = params.toString();
+        const url = `http://localhost:8000/fleet/mtbf${queryString ? '?' + queryString : ''}`;
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Fleet MTBF fetch failed: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        setFleetMtbf(data);
+      } catch (error) {
+        console.error('Error fetching fleet MTBF:', error);
+        setFleetMtbf(null);
+      } finally {
+        setLoadingFleetMtbf(false);
+      }
+    };
+    
+    fetchFleetMtbf();
+  }, [filterPlant, filterModel, filterOrigin]);
 
   const plantOptions = useMemo(() => [...new Set(units.map(u => u.planta).filter(Boolean))].sort(), [units]);
   const modelOptions = useMemo(() => [...new Set(units.map(u => u.modelo).filter(Boolean))].sort(), [units]);
@@ -640,6 +882,75 @@ const App = () => {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Fleet MTBF Card */}
+        <div className="mb-6 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <div className="bg-blue-100 p-2 rounded-lg text-blue-600">
+                <Activity size={18} />
+              </div>
+              <h2 className="text-lg font-bold text-slate-800">Fleet MTBF</h2>
+            </div>
+            <div className="text-sm text-slate-500">
+              {loadingFleetMtbf ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="animate-spin" size={14} />
+                  <span>Updating...</span>
+                </div>
+              ) : (
+                <span>
+                  {filterPlant || filterModel || filterOrigin ? 'Filtered fleet' : 'Overall fleet'}
+                </span>
+              )}
+            </div>
+          </div>
+          
+          {loadingFleetMtbf ? (
+            <div className="h-24 flex items-center justify-center">
+              <Loader2 className="animate-spin text-slate-400" size={24} />
+            </div>
+          ) : fleetMtbf ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-blue-50 p-4 rounded-xl">
+                <div className="text-sm text-blue-600 font-bold uppercase tracking-wider mb-1">Fleet MTBF</div>
+                <div className="text-3xl font-bold text-slate-800">{fleetMtbf.fleet_mtbf.toFixed(1)}</div>
+                <div className="text-sm text-slate-500 mt-1">days</div>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-xl">
+                <div className="text-sm text-slate-600 font-bold uppercase tracking-wider mb-1">Units</div>
+                <div className="text-3xl font-bold text-slate-800">{fleetMtbf.fleet_unit_count}</div>
+                <div className="text-sm text-slate-500 mt-1">active units</div>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-xl">
+                <div className="text-sm text-slate-600 font-bold uppercase tracking-wider mb-1">Intervals</div>
+                <div className="text-3xl font-bold text-slate-800">{fleetMtbf.fleet_interval_count}</div>
+                <div className="text-sm text-slate-500 mt-1">total intervals</div>
+              </div>
+              <div className="bg-slate-50 p-4 rounded-xl">
+                <div className="text-sm text-slate-600 font-bold uppercase tracking-wider mb-1">Range</div>
+                <div className="text-xl font-bold text-slate-800">
+                  {fleetMtbf.fleet_min_interval.toFixed(0)}–{fleetMtbf.fleet_max_interval.toFixed(0)}
+                </div>
+                <div className="text-sm text-slate-500 mt-1">days min–max</div>
+              </div>
+            </div>
+          ) : (
+            <div className="h-24 flex items-center justify-center text-slate-400">
+              <AlertTriangle size={20} className="mr-2" />
+              Fleet MTBF data unavailable
+            </div>
+          )}
+          
+          {(filterPlant || filterModel || filterOrigin) && fleetMtbf && (
+            <div className="mt-4 pt-4 border-t border-slate-200 text-sm text-slate-500">
+              Filters applied: 
+              {filterPlant && <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded-md">Plant: {filterPlant}</span>}
+              {filterModel && <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded-md">Model: {filterModel}</span>}
+              {filterOrigin && <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-700 rounded-md">Origin: {filterOrigin}</span>}
+            </div>
+          )}
         </div>
 
         {/* Results count */}

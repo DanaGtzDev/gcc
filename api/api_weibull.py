@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import joblib
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -94,6 +94,126 @@ def preprocess_for_aft(orders_list):
 
     return latest
 
+def calculate_mtbf(unit_orders):
+    """
+    Calculate MTBF statistics for a unit's order history.
+    Returns overall MTBF, rolling MTBF series, and time-series data.
+    """
+    if len(unit_orders) < 2:
+        return None
+    
+    # Ensure sorted by date
+    unit_orders = unit_orders.sort_values('created_on').copy()
+    unit_orders['created_on'] = pd.to_datetime(unit_orders['created_on'])
+    
+    # Calculate days between consecutive orders
+    unit_orders['days_since_previous'] = unit_orders['created_on'].diff().dt.days
+    
+    # Remove first row (no previous order)
+    intervals = unit_orders.iloc[1:].copy()
+    
+    if intervals.empty:
+        return None
+    
+    # Overall MTBF (mean of all intervals)
+    overall_mtbf = intervals['days_since_previous'].mean()
+    
+    # Calculate cumulative MTBF (MTBF up to each point)
+    intervals['cumulative_mtbf'] = intervals['days_since_previous'].expanding().mean()
+    
+    # Calculate rolling MTBF with window of last 10 intervals (or all available if less)
+    window = min(10, len(intervals))
+    intervals['rolling_mtbf_10'] = intervals['days_since_previous'].rolling(window=window, min_periods=1).mean()
+    
+    # Prepare time-series data for plotting
+    time_series = []
+    for idx, row in intervals.iterrows():
+        time_series.append({
+            "order_date": row['created_on'].isoformat(),
+            "order_sequence": int(row.name),  # index in the dataframe
+            "days_since_previous": float(row['days_since_previous']),
+            "cumulative_mtbf": float(row['cumulative_mtbf']),
+            "rolling_mtbf_10": float(row['rolling_mtbf_10'])
+        })
+    
+    return {
+        "overall_mtbf": float(overall_mtbf),
+        "interval_count": int(len(intervals)),
+        "min_interval": float(intervals['days_since_previous'].min()),
+        "max_interval": float(intervals['days_since_previous'].max()),
+        "std_interval": float(intervals['days_since_previous'].std()),
+        "time_series": time_series
+    }
+
+def calculate_fleet_mtbf(df, plant=None, model=None, origin=None):
+    """
+    Calculate fleet-wide MTBF with optional filters.
+    Returns aggregated statistics across all units.
+    """
+    # Apply filters if provided
+    filtered_df = df.copy()
+    
+    if plant is not None:
+        filtered_df = filtered_df[filtered_df['plant'] == plant]
+    
+    if model is not None:
+        # Model might be numeric, convert to string for comparison
+        filtered_df = filtered_df[filtered_df['modelo'].astype(str) == str(model)]
+    
+    if origin is not None:
+        filtered_df = filtered_df[filtered_df['origen'] == origin]
+    
+    if filtered_df.empty:
+        return None
+    
+    # Get unique units in filtered dataset
+    unique_units = filtered_df['equipment'].unique()
+    
+    all_intervals = []
+    unit_mtbfs = []
+    
+    for unit_id in unique_units:
+        unit_orders = filtered_df[filtered_df['equipment'] == unit_id].sort_values('created_on')
+        
+        if len(unit_orders) < 2:
+            continue
+        
+        # Convert to datetime if not already
+        unit_orders = unit_orders.copy()
+        unit_orders['created_on'] = pd.to_datetime(unit_orders['created_on'])
+        
+        # Calculate intervals for this unit
+        intervals = unit_orders['created_on'].diff().dt.days.iloc[1:]  # Skip first NaN
+        
+        # Add to global list
+        all_intervals.extend(intervals.tolist())
+        
+        # Also calculate unit-level MTBF for statistics
+        if len(intervals) > 0:
+            unit_mtbfs.append(intervals.mean())
+    
+    if not all_intervals:
+        return None
+    
+    # Convert to numpy array for calculations
+    all_intervals = np.array(all_intervals)
+    
+    return {
+        "fleet_mtbf": float(all_intervals.mean()),
+        "fleet_interval_count": int(len(all_intervals)),
+        "fleet_unit_count": int(len(unit_mtbfs)),
+        "fleet_min_interval": float(all_intervals.min()),
+        "fleet_max_interval": float(all_intervals.max()),
+        "fleet_std_interval": float(all_intervals.std()),
+        "unit_mtbf_mean": float(np.mean(unit_mtbfs)) if unit_mtbfs else 0.0,
+        "unit_mtbf_std": float(np.std(unit_mtbfs)) if unit_mtbfs else 0.0,
+        "filter_applied": {
+            "plant": plant,
+            "model": model,
+            "origin": origin
+        }
+    }
+
 # --- ENDPOINTS ---
 @app.get("/units")
 async def get_all_units():
@@ -165,6 +285,49 @@ async def get_order_history(unit_id: int):
             record["changed_on"] = record["changed_on"].isoformat()
     
     return history
+
+@app.get("/mtbf/{unit_id}")
+async def get_unit_mtbf(unit_id: int):
+    """
+    Calculate MTBF (Mean Time Between Failure) for a specific unit.
+    Treats each order as a failure event.
+    """
+    unit_orders = ordenes.loc[ordenes["equipment"] == unit_id].sort_values(by='created_on')
+    
+    if unit_orders.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Equipment with id {unit_id} not found"
+        )
+    
+    mtbf_result = calculate_mtbf(unit_orders)
+    
+    if mtbf_result is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough order history (need at least 2 orders) for unit {unit_id}"
+        )
+    
+    return mtbf_result
+
+@app.get("/fleet/mtbf")
+async def get_fleet_mtbf(
+    plant: Optional[str] = None,
+    model: Optional[str] = None,
+    origin: Optional[str] = None
+):
+    """
+    Calculate fleet-wide MTBF with optional filters.
+    """
+    result = calculate_fleet_mtbf(ordenes, plant=plant, model=model, origin=origin)
+    
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No data found for the specified filters"
+        )
+    
+    return result
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
