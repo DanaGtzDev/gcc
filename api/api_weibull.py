@@ -23,8 +23,10 @@ ordenes = pd.read_csv("consolidated_ordenes.csv")
 aft       = joblib.load("scaler_encoder/weibull_aft_model.pkl")
 le_marca  = joblib.load("scaler_encoder/le_marca.pkl")
 le_plant  = joblib.load("scaler_encoder/le_plant.pkl")
+feature_scaler = joblib.load("scaler_encoder/feature_scaler.pkl")
 
 # Training dataset stats needed for normalization (saved from notebook)
+# Note: model_df_stats is kept for compatibility but not used for normalization
 model_df_stats = joblib.load("scaler_encoder/model_df_stats.pkl")  # dict of {col: (min, range)}
 
 CONT_COLS = [
@@ -84,11 +86,8 @@ def preprocess_for_aft(orders_list):
 
     latest = df[FEATURE_COLS].iloc[[-1]].copy()
 
-    # Normalize using saved training stats, clip to [0,1] to prevent blow-up
-    for col in CONT_COLS:
-        col_min, col_range = model_df_stats[col]
-        if col_range > 0:
-            latest[col] = ((latest[col] - col_min) / col_range).clip(0, 1)
+    # Normalize rolling features using the trained MinMaxScaler
+    latest[CONT_COLS] = feature_scaler.transform(latest[CONT_COLS])
 
     latest['days_diff']      = 1
     latest['event_observed'] = 1
@@ -138,6 +137,34 @@ async def predict(unit_id: int):
         "interval_80_low":              float(p10),
         "interval_80_high":             float(p90),
     }
+
+@app.get("/history/{unit_id}")
+async def get_order_history(unit_id: int):
+    """
+    Returns chronological order history for a given unit.
+    """
+    unit_orders = ordenes.loc[ordenes["equipment"] == unit_id].sort_values(by='created_on')
+    
+    if unit_orders.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Equipment with id {unit_id} not found"
+        )
+    
+    # Convert to list of records with relevant fields
+    history = unit_orders[[
+        "order", "description", "created_on", "changed_on",
+        "main_plant", "plant", "marca", "modelo", "origen"
+    ]].to_dict(orient='records')
+    
+    # Convert datetime objects to ISO format strings for JSON serialization
+    for record in history:
+        if isinstance(record.get("created_on"), pd.Timestamp):
+            record["created_on"] = record["created_on"].isoformat()
+        if isinstance(record.get("changed_on"), pd.Timestamp):
+            record["changed_on"] = record["changed_on"].isoformat()
+    
+    return history
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

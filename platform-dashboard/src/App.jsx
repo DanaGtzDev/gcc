@@ -1,8 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import './App.css'
-import { Settings, Activity, AlertTriangle, Loader2, HardDrive, MapPin, Package, Globe, Factory, Filter, X, ChevronDown } from 'lucide-react';
+import { Settings, Activity, AlertTriangle, Loader2, HardDrive, MapPin, Package, Globe, Factory, Filter, X, ChevronDown, ChevronLeft } from 'lucide-react';
 
-const MetaTag = ({ icon: Icon, label, value }) => (
+const MetaTag = ({ icon: Icon, label, value }) => ( // eslint-disable-line no-unused-vars
   <div className="flex items-center gap-2 min-w-0">
     <div className="shrink-0 text-slate-400">
       <Icon size={12} />
@@ -14,7 +14,7 @@ const MetaTag = ({ icon: Icon, label, value }) => (
   </div>
 );
 
-const UnitCard = ({ id, days, main_plant, modelo, origen, planta }) => {
+const UnitCard = ({ id, days, main_plant, modelo, origen, planta, onClick }) => {
   const isCritical = days < 3;
   const isWarning = days >= 3 && days < 8;
 
@@ -26,7 +26,10 @@ const UnitCard = ({ id, days, main_plant, modelo, origen, planta }) => {
   const badgeLabel = isCritical ? "Critical" : isWarning ? "Warning" : "Nominal";
 
   return (
-    <div className={`bg-white rounded-2xl shadow-sm border ${borderColor} hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col`}>
+    <div 
+      className={`bg-white rounded-2xl shadow-sm border ${borderColor} hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col cursor-pointer`}
+      onClick={onClick}
+    >
       <div className={`h-1 w-full ${isCritical ? 'bg-red-500' : isWarning ? 'bg-amber-400' : 'bg-emerald-500'}`} />
       <div className="p-5 flex flex-col gap-4 flex-1">
         <div className="flex justify-between items-start">
@@ -70,7 +73,7 @@ const UnitCard = ({ id, days, main_plant, modelo, origen, planta }) => {
   );
 };
 
-const FilterDropdown = ({ label, icon: Icon, options, value, onChange }) => {
+const FilterDropdown = ({ label, icon: Icon, options, value, onChange }) => { // eslint-disable-line no-unused-vars
   const [open, setOpen] = useState(false);
 
   return (
@@ -117,9 +120,369 @@ const FilterDropdown = ({ label, icon: Icon, options, value, onChange }) => {
   );
 };
 
+const UnitDetailView = ({ unitId, onBack }) => {
+  const [history, setHistory] = useState([]);
+  const [prediction, setPrediction] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        // Fetch history
+        const historyRes = await fetch(`http://localhost:8000/history/${unitId}`);
+        if (!historyRes.ok) throw new Error(`History failed: ${historyRes.status}`);
+        const historyData = await historyRes.json();
+        
+        // Fetch prediction
+        const predRes = await fetch(`http://localhost:8000/predict/${unitId}`);
+        if (!predRes.ok) throw new Error(`Prediction failed: ${predRes.status}`);
+        const predData = await predRes.json();
+        
+        setHistory(historyData);
+        setPrediction(predData);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchData();
+  }, [unitId]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="animate-spin mx-auto mb-4 text-slate-400" size={32} />
+          <p className="text-slate-500 font-medium">Loading unit data...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (error) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <AlertTriangle className="mx-auto mb-4 text-red-400" size={32} />
+          <p className="text-red-600 font-medium">Error loading unit data</p>
+          <p className="text-slate-500 text-sm mt-2">{error}</p>
+          <button
+            onClick={onBack}
+            className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-lg font-semibold hover:bg-slate-800 transition-colors"
+          >
+            Back to dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Process history for chart
+  const orders = history.map((order, index) => ({
+    ...order,
+    index, // order sequence number
+    date: new Date(order.created_on),
+  }));
+  
+  const lastOrder = orders[orders.length - 1];
+  const predictedDate = new Date(lastOrder.date);
+  predictedDate.setDate(predictedDate.getDate() + prediction.predicted_days_to_next_order);
+  
+  // Prepare data for timeline chart
+  const allDates = [...orders.map(o => o.date), predictedDate];
+  const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
+  const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
+  const dateRange = Math.max(1, maxDate.getTime() - minDate.getTime());
+  
+  // Calculate dynamic width based on data
+  const daysRange = dateRange / (1000 * 60 * 60 * 24); // Convert ms to days
+  const minWidth = 800;
+  const maxWidth = 4000;
+  const widthBasedOnOrders = Math.max(minWidth, orders.length * 40);
+  const widthBasedOnTime = Math.max(minWidth, daysRange * 3); // 3px per day
+  const width = Math.min(maxWidth, Math.max(widthBasedOnOrders, widthBasedOnTime));
+  
+  const height = 400;
+  const padding = { top: 40, right: 40, bottom: 60, left: 60 };
+  
+  const xScale = (date) => padding.left + ((date.getTime() - minDate.getTime()) / dateRange) * (width - padding.left - padding.right);
+  const yPos = height / 2;
+  
+  // Determine which orders should show labels to avoid overcrowding
+  const shouldShowOrderLabel = (index) => {
+    const total = orders.length;
+    if (total <= 20) return true; // Show all for few orders
+    if (index === 0 || index === total - 1) return true; // First and last
+    if (index % Math.ceil(total / 20) === 0) return true; // ~20 labels total
+    return false;
+  };
+  
+  // Dynamic point radius based on order count (smaller for many orders)
+  const pointRadius = Math.max(2, 6 - Math.floor(orders.length / 50));
+  
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-white border-b border-slate-200 px-8 py-5 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="p-2 hover:bg-slate-100 rounded-full text-slate-400 transition-colors"
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <div className="bg-slate-900 p-2 rounded-lg text-white">
+            <HardDrive size={20} />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">Unit {unitId}</h1>
+            <p className="text-sm text-slate-500">Order History & Prediction</p>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-bold text-slate-400 uppercase">Predicted Next Order</p>
+          <p className="text-lg font-bold text-emerald-600">
+            {prediction.predicted_days_to_next_order.toFixed(1)} days
+          </p>
+          <p className="text-xs text-slate-500">
+            ({predictedDate.toLocaleDateString()})
+          </p>
+        </div>
+      </header>
+      
+      <main className="max-w-7xl mx-auto p-8">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
+          <h2 className="text-lg font-bold text-slate-800 mb-4">Order Timeline</h2>
+          <div className="overflow-x-auto">
+            <svg width={width} height={height} className="mx-auto">
+              {/* Timeline line */}
+              <line
+                x1={padding.left}
+                y1={yPos}
+                x2={width - padding.right}
+                y2={yPos}
+                stroke="#94a3b8"
+                strokeWidth="2"
+              />
+              
+              {/* Order points */}
+              {orders.map((order, idx) => {
+                const x = xScale(order.date);
+                return (
+                  <g key={idx}>
+                    <title>
+                      Order {order.order} - {order.date.toLocaleDateString()}
+                      {order.description && `: ${order.description}`}
+                    </title>
+                    <circle
+                      cx={x}
+                      cy={yPos}
+                      r={pointRadius}
+                      fill="#3b82f6"
+                      stroke="white"
+                      strokeWidth="2"
+                    />
+                    {shouldShowOrderLabel(idx) && (
+                      <text
+                        x={x}
+                        y={yPos - 15}
+                        textAnchor="middle"
+                        className="text-xs font-semibold fill-slate-700"
+                      >
+                        {order.order}
+                      </text>
+                    )}
+                    {shouldShowOrderLabel(idx) && (
+                      <text
+                        x={x}
+                        y={yPos + 30}
+                        textAnchor="middle"
+                        className="text-xs fill-slate-500"
+                      >
+                        {order.date.toLocaleDateString()}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              
+              {/* Predicted point */}
+              {prediction && (
+                <g>
+                  <title>
+                    Predicted Next Order: {predictedDate.toLocaleDateString()} 
+                    ({prediction.predicted_days_to_next_order.toFixed(1)} days from last order)
+                  </title>
+                  <circle
+                    cx={xScale(predictedDate)}
+                    cy={yPos}
+                    r="8"
+                    fill="#10b981"
+                    stroke="white"
+                    strokeWidth="3"
+                  />
+                  <text
+                    x={xScale(predictedDate)}
+                    y={yPos - 20}
+                    textAnchor="middle"
+                    className="text-sm font-bold fill-emerald-700"
+                  >
+                    Predicted
+                  </text>
+                  <text
+                    x={xScale(predictedDate)}
+                    y={yPos + 40}
+                    textAnchor="middle"
+                    className="text-xs fill-slate-500"
+                  >
+                    {predictedDate.toLocaleDateString()}
+                  </text>
+                </g>
+               )}
+               
+               {/* Timeline ticks */}
+               {[...Array(6)].map((_, i) => {
+                 const date = new Date(minDate.getTime() + (dateRange * i) / 5);
+                 const x = padding.left + ((date.getTime() - minDate.getTime()) / dateRange) * (width - padding.left - padding.right);
+                 return (
+                   <g key={i}>
+                     <line
+                       x1={x}
+                       y1={yPos - 5}
+                       x2={x}
+                       y2={yPos + 5}
+                       stroke="#64748b"
+                       strokeWidth="1"
+                     />
+                     <text
+                       x={x}
+                       y={yPos + 40}
+                       textAnchor="middle"
+                       className="text-xs fill-slate-600"
+                     >
+                       {date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+                     </text>
+                   </g>
+                 );
+               })}
+               
+               {/* Axis labels */}
+              <text
+                x={width / 2}
+                y={height - 10}
+                textAnchor="middle"
+                className="text-sm font-semibold fill-slate-700"
+              >
+                Timeline
+              </text>
+              <text
+                x={padding.left - 40}
+                y={yPos}
+                textAnchor="middle"
+                className="text-sm font-semibold fill-slate-700"
+                transform={`rotate(-90, ${padding.left - 40}, ${yPos})`}
+              >
+                Orders
+              </text>
+            </svg>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 className="text-lg font-bold text-slate-800 mb-4">Prediction Details</h2>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Predicted days to next order:</span>
+                <span className="text-lg font-bold text-emerald-600">
+                  {prediction.predicted_days_to_next_order.toFixed(1)} days
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">80% confidence interval:</span>
+                <span className="text-sm font-semibold text-slate-700">
+                  {prediction.interval_80_low.toFixed(0)} – {prediction.interval_80_high.toFixed(0)} days
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Expected date:</span>
+                <span className="text-sm font-semibold text-slate-700">
+                  {predictedDate.toLocaleDateString()}
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 className="text-lg font-bold text-slate-800 mb-4">Order Statistics</h2>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Total orders:</span>
+                <span className="text-lg font-bold text-slate-800">{orders.length}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">First order:</span>
+                <span className="text-sm font-semibold text-slate-700">
+                  {orders[0]?.date.toLocaleDateString()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Last order:</span>
+                <span className="text-sm font-semibold text-slate-700">
+                  {lastOrder.date.toLocaleDateString()}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-600">Days since last order:</span>
+                <span className="text-sm font-semibold text-slate-700">
+                  {Math.floor((new Date() - lastOrder.date) / (1000 * 60 * 60 * 24))} days
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="mt-6 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <h2 className="text-lg font-bold text-slate-800 mb-4">Recent Orders</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-slate-200">
+                <tr>
+                  <th className="text-left py-3 text-slate-500 font-bold uppercase tracking-wider">Order #</th>
+                  <th className="text-left py-3 text-slate-500 font-bold uppercase tracking-wider">Description</th>
+                  <th className="text-left py-3 text-slate-500 font-bold uppercase tracking-wider">Date</th>
+                  <th className="text-left py-3 text-slate-500 font-bold uppercase tracking-wider">Plant</th>
+                  <th className="text-left py-3 text-slate-500 font-bold uppercase tracking-wider">Model</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.slice(-10).reverse().map((order) => (
+                  <tr key={order.order} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                    <td className="py-3 font-mono font-bold text-slate-800">{order.order}</td>
+                    <td className="py-3 text-slate-700">{order.description}</td>
+                    <td className="py-3 text-slate-600">{new Date(order.created_on).toLocaleDateString()}</td>
+                    <td className="py-3 text-slate-600">{order.plant}</td>
+                    <td className="py-3 text-slate-600">{order.modelo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
 const App = () => {
   const [units, setUnits] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedUnitId, setSelectedUnitId] = useState(null);
 
   const [filterPlant, setFilterPlant] = useState(null);
   const [filterModel, setFilterModel] = useState(null);
@@ -146,7 +509,7 @@ const App = () => {
               planta: full_unit_info_json.plant,
               days: pred_data.predicted_days_to_next_order
             };
-          } catch (e) { return null; }
+          } catch { return null; }
         }));
 
         setUnits(results.filter(u => u !== null));
@@ -176,6 +539,10 @@ const App = () => {
 
   const criticalCount = units.filter(u => u.days < 3).length;
   const warningCount = units.filter(u => u.days >= 3 && u.days < 8).length;
+
+  if (selectedUnitId) {
+    return <UnitDetailView unitId={selectedUnitId} onBack={() => setSelectedUnitId(null)} />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
@@ -294,7 +661,11 @@ const App = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredUnits.map(unit => (
-              <UnitCard key={unit.id} {...unit} />
+              <UnitCard 
+                key={unit.id} 
+                {...unit} 
+                onClick={() => setSelectedUnitId(unit.id)}
+              />
             ))}
           </div>
         )}
